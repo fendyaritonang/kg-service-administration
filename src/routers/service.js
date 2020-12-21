@@ -291,6 +291,60 @@ router.patch('/v1/church/service/:serviceid', auth, async (req, res) => {
 
 /**
  * @swagger
+ * /v1/church/service/publish/{serviceid}:
+ *  patch:
+ *      tags:
+ *      - "service"
+ *      summary: Publish service schedule
+ *      description: Endpoint to publish service schedule
+ *      parameters:
+ *          -   in: "path"
+ *              name: "serviceid"
+ *              description: "Service Id"
+ *              required: true
+ *              type: "string"
+ *      responses:
+ *          '200':
+ *              description: Successfully published a service schedule
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.patch(
+  '/v1/church/service/publish/:serviceid',
+  auth,
+  async (req, res) => {
+    const serviceId = req.params.serviceid;
+
+    try {
+      const service = await Service.findOne({ _id: serviceId, status: 2 });
+      if (!service) {
+        throw new Error('Invalid service record');
+      }
+
+      const churchCode = service.churchCode;
+      const church = await Church.isChurchAdminAndAvailable(
+        churchCode,
+        req.user.email
+      );
+      if (!church) {
+        throw new Error(
+          'Only church admin able to perform this operation or church must be confirmed'
+        );
+      }
+
+      service.status = 1;
+      await service.save();
+
+      res.status(200).send();
+    } catch (e) {
+      logging.routerErrorLog(req, e.toString());
+      res.status(400).send();
+    }
+  }
+);
+
+/**
+ * @swagger
  * /v1/church/service/liturgy/{serviceid}:
  *  post:
  *      tags:
@@ -629,15 +683,33 @@ router.get('/v1/church/service/events', async (req, res) => {
         .format();
     }
 
+    const searchDuration = moment
+      .duration(moment(serviceDateTimeTo).diff(moment(serviceDateTimeFrom)))
+      .asDays();
+    if (searchDuration > 30) {
+      throw new Error('You can only search maximum 30 days range');
+    }
+
     let church = [];
     let searchAnd = [];
     if (name && name !== '') {
       church = await Church.find(
-        { status: 1, name: { $regex: `.*${name}.*` } },
+        {
+          status: 1,
+          name: {
+            $regex: new RegExp(
+              `.*${escape(name).replace(/\%20/g, ' ')}.*`,
+              'i'
+            ),
+          },
+        },
         'code name address timeOffset'
       );
+
       if (church.length > 0) {
         searchAnd.push({ churchCode: { $in: church.map((obj) => obj.code) } });
+      } else {
+        return res.status(200).send({ churches: [], services: [] });
       }
     }
 
@@ -666,7 +738,17 @@ router.get('/v1/church/service/events', async (req, res) => {
       );
     }
 
-    res.status(200).send({ churches: church, services: service });
+    if (!church || church.length == 0) {
+      church = [];
+      service = [];
+    }
+
+    const churchCodes = church.map((item) => item.code);
+
+    res.status(200).send({
+      churches: church,
+      services: service.filter((item) => churchCodes.includes(item.churchCode)),
+    });
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();

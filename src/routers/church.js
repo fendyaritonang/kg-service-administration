@@ -268,6 +268,7 @@ router.post('/v1/church/register', auth, async (req, res) => {
       name: req.body.name,
       address: req.body.address,
       timeOffset: req.body.timeOffset,
+      status: 1,
     });
     church.admins.push({ admin: req.user.email });
     await church.save();
@@ -308,6 +309,9 @@ router.post('/v1/church/register', auth, async (req, res) => {
  *                      address:
  *                          type: "string"
  *                          example: "8 Short Street Singapore"
+ *                      timeOffset:
+ *                          type: "integer"
+ *                          example: "420"
  *      responses:
  *          '200':
  *              description: Successfully updated church name and address
@@ -316,14 +320,14 @@ router.post('/v1/church/register', auth, async (req, res) => {
  *                  properties:
  *                      church:
  *                          type: "object"
- *                          $ref: "#/definitions/Church"
+ *                          $ref: "#/definitions/ChurchHeader"
  *          '400':
  *              description: Error, invalid input
  */
 router.patch('/v1/church/update/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
   const updates = Object.keys(req.body);
-  const allowedUpdates = ['name', 'address'];
+  const allowedUpdates = ['name', 'address', 'timeOffset'];
   const isValidOperation = updates.every((update) =>
     allowedUpdates.includes(update)
   );
@@ -341,7 +345,13 @@ router.patch('/v1/church/update/:churchcode', auth, async (req, res) => {
     updates.forEach((update) => (church[update] = req.body[update]));
     await church.save();
 
-    res.status(200).send(church);
+    res.status(200).send({
+      _id: church._id,
+      code: church.code,
+      name: church.name,
+      address: church.address,
+      timeOffset: church.timeOffset,
+    });
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -433,6 +443,88 @@ router.get('/v1/church/detail/:churchcode', auth, async (req, res) => {
 
 /**
  * @swagger
+ * /v1/church/reactivate/{churchcode}:
+ *  patch:
+ *      tags:
+ *      - "church"
+ *      summary: Reactive a church
+ *      description: Endpoint to reactivate a church
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *      responses:
+ *          '200':
+ *              description: Successfully reactivated a church
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.patch('/v1/church/reactivate/:churchcode', auth, async (req, res) => {
+  const churchCode = req.params.churchcode;
+  try {
+    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    if (!church) {
+      throw new Error('Only church admin able to perform this operation');
+    }
+    if (church.status !== 0) {
+      throw new Error('Church is already active');
+    }
+
+    church.status = 1;
+    await church.save();
+
+    res.status(200).send();
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
+
+/**
+ * @swagger
+ * /v1/church/inactivate/{churchcode}:
+ *  delete:
+ *      tags:
+ *      - "church"
+ *      summary: Inactivate a church
+ *      description: Endpoint to inactivate a church
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *      responses:
+ *          '200':
+ *              description: Successfully inactivated a church
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.delete('/v1/church/inactivate/:churchcode', auth, async (req, res) => {
+  const churchCode = req.params.churchcode;
+  try {
+    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    if (!church) {
+      throw new Error('Only church admin able to perform this operation');
+    }
+    if (church.status === 0) {
+      throw new Error('Church is already inactive');
+    }
+
+    church.status = 0;
+    await church.save();
+
+    res.status(200).send();
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
+
+/**
+ * @swagger
  * /v1/church/servants/{churchcode}:
  *  post:
  *      tags:
@@ -468,16 +560,6 @@ router.get('/v1/church/detail/:churchcode', auth, async (req, res) => {
  *      responses:
  *          '200':
  *              description: Successfully added new church servant
- *              schema:
- *                  type: "object"
- *                  properties:
- *                      churchCode:
- *                          type: "string"
- *                          example: "hkbps"
- *                      servants:
- *                          type: "array"
- *                          items:
- *                              $ref: "#/definitions/Servants"
  *          '400':
  *              description: Error, invalid input
  */
@@ -485,9 +567,14 @@ router.post('/v1/church/servants/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const isDuplicate = church.servants.filter(
@@ -506,10 +593,7 @@ router.post('/v1/church/servants/:churchcode', auth, async (req, res) => {
 
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      servants: church.servants,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -553,16 +637,6 @@ router.post('/v1/church/servants/:churchcode', auth, async (req, res) => {
  *      responses:
  *          '200':
  *              description: Successfully modified church servant data
- *              schema:
- *                  type: "object"
- *                  properties:
- *                      churchCode:
- *                          type: "string"
- *                          example: "hkbps"
- *                      servants:
- *                          type: "array"
- *                          items:
- *                              $ref: "#/definitions/Servants"
  *          '400':
  *              description: Error, invalid input
  */
@@ -570,9 +644,14 @@ router.patch('/v1/church/servants/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const doesExist = church.servants.filter((o) => o.email === req.body.email);
@@ -584,20 +663,100 @@ router.patch('/v1/church/servants/:churchcode', auth, async (req, res) => {
     const servantIndex = church.servants.findIndex(
       (item) => item.email === req.body.email
     );
+
+    if (church.servants[servantIndex].status === 0) {
+      throw new Error('Unable to update church servant');
+    }
+
     church.servants[servantIndex].name = req.body.name;
     church.servants[servantIndex].role = req.body.role;
 
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      servants: church.servants,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
   }
 });
+
+/**
+ * @swagger
+ * /v1/church/servants/reactivate/{churchcode}:
+ *  patch:
+ *      tags:
+ *      - "servants"
+ *      summary: Reactivate a church servant
+ *      description: Endpoint to reactivate a church servant
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *          -   in: "body"
+ *              name: "body"
+ *              required: true
+ *              schema:
+ *                  type: "object"
+ *                  required:
+ *                  -   "email"
+ *                  -   "name"
+ *                  -   "role"
+ *                  properties:
+ *                      email:
+ *                          type: "string"
+ *                          format: "email"
+ *                          example: "john@gmaail.com"
+ *      responses:
+ *          '200':
+ *              description: Successfully reactivated a church servant
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.patch(
+  '/v1/church/servants/reactivate/:churchcode',
+  auth,
+  async (req, res) => {
+    const churchCode = req.params.churchcode;
+
+    try {
+      const church = await Church.isChurchAdminAndAvailable(
+        churchCode,
+        req.user.email
+      );
+      if (!church) {
+        throw new Error(
+          'Only church admin able to perform this operation or church must be active'
+        );
+      }
+
+      const doesExist = church.servants.filter(
+        (o) => o.email === req.body.email
+      );
+
+      if (!doesExist || doesExist.length === 0) {
+        throw new Error('Servant does not exist!');
+      }
+
+      const servantIndex = church.servants.findIndex(
+        (item) => item.email === req.body.email
+      );
+
+      if (church.servants[servantIndex].status === 1) {
+        throw new Error('Church servant is already active');
+      }
+
+      church.servants[servantIndex].status = 1;
+      await church.save();
+
+      res.status(200).send();
+    } catch (e) {
+      logging.routerErrorLog(req, e.toString());
+      res.status(400).send();
+    }
+  }
+);
 
 /**
  * @swagger
@@ -645,9 +804,14 @@ router.delete('/v1/church/servants/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const doesExist = church.servants.filter((o) => o.email === req.body.email);
@@ -659,14 +823,15 @@ router.delete('/v1/church/servants/:churchcode', auth, async (req, res) => {
     const servantIndex = church.servants.findIndex(
       (item) => item.email === req.body.email
     );
-    church.servants[servantIndex].status = 0;
 
+    if (church.servants[servantIndex].status === 0) {
+      throw new Error('Church servant is already inactive');
+    }
+
+    church.servants[servantIndex].status = 0;
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      servants: church.servants,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -706,11 +871,19 @@ router.delete('/v1/church/servants/:churchcode', auth, async (req, res) => {
 router.get('/v1/church/servants/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
-    res.status(200).send({ churchCode, servants: church.servants });
+    res.status(200).send({
+      churchCode,
+      servants: church.servants.filter((item) => item.status === 1),
+    });
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -749,16 +922,6 @@ router.get('/v1/church/servants/:churchcode', auth, async (req, res) => {
  *      responses:
  *          '200':
  *              description: Successfully added new church location
- *              schema:
- *                  type: "object"
- *                  properties:
- *                      churchCode:
- *                          type: "string"
- *                          example: "hkbps"
- *                      locations:
- *                          type: "array"
- *                          items:
- *                              $ref: "#/definitions/Locations"
  *          '400':
  *              description: Error, invalid input
  */
@@ -766,9 +929,14 @@ router.post('/v1/church/locations/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const isDuplicate = church.locations.filter(
@@ -786,10 +954,7 @@ router.post('/v1/church/locations/:churchcode', auth, async (req, res) => {
 
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      locations: church.locations,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -828,16 +993,6 @@ router.post('/v1/church/locations/:churchcode', auth, async (req, res) => {
  *      responses:
  *          '200':
  *              description: Successfully modified church location
- *              schema:
- *                  type: "object"
- *                  properties:
- *                      churchCode:
- *                          type: "string"
- *                          example: "hkbps"
- *                      locations:
- *                          type: "array"
- *                          items:
- *                              $ref: "#/definitions/Locations"
  *          '400':
  *              description: Error, invalid input
  */
@@ -845,9 +1000,14 @@ router.patch('/v1/church/locations/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const doesExist = church.locations.filter((o) => o.code === req.body.code);
@@ -856,17 +1016,17 @@ router.patch('/v1/church/locations/:churchcode', auth, async (req, res) => {
       throw new Error('Location code does not exist!');
     }
 
-    const servantIndex = church.locations.findIndex(
-      (item) => item.email === req.body.email
+    const locationIndex = church.locations.findIndex(
+      (item) => item.code === req.body.code
     );
-    church.locations[servantIndex].location = req.body.location;
 
+    if (church.locations[locationIndex].status === 0) {
+      throw new Error('Unable to update church location');
+    }
+    church.locations[locationIndex].location = req.body.location;
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      locations: church.locations,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -901,16 +1061,6 @@ router.patch('/v1/church/locations/:churchcode', auth, async (req, res) => {
  *      responses:
  *          '200':
  *              description: Successfully modified church location
- *              schema:
- *                  type: "object"
- *                  properties:
- *                      churchCode:
- *                          type: "string"
- *                          example: "hkbps"
- *                      locations:
- *                          type: "array"
- *                          items:
- *                              $ref: "#/definitions/Locations"
  *          '400':
  *              description: Error, invalid input
  */
@@ -918,9 +1068,14 @@ router.delete('/v1/church/locations/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
 
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
 
     const doesExist = church.locations.filter((o) => o.code === req.body.code);
@@ -932,14 +1087,15 @@ router.delete('/v1/church/locations/:churchcode', auth, async (req, res) => {
     const locationIndex = church.locations.findIndex(
       (item) => item.code === req.body.code
     );
-    church.locations[locationIndex].status = 0;
 
+    if (church.locations[locationIndex].status === 0) {
+      throw new Error('Location is already inactive');
+    }
+
+    church.locations[locationIndex].status = 0;
     await church.save();
 
-    res.status(200).send({
-      churchCode,
-      locations: church.locations,
-    });
+    res.status(200).send();
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
@@ -979,15 +1135,97 @@ router.delete('/v1/church/locations/:churchcode', auth, async (req, res) => {
 router.get('/v1/church/locations/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
   try {
-    const church = await Church.isChurchAdmin(churchCode, req.user.email);
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
     if (!church) {
-      throw new Error('Only church admin able to perform this operation');
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
     }
-    res.status(200).send({ churchCode, locations: church.locations });
+
+    res.status(200).send({
+      churchCode,
+      locations: church.locations.filter((item) => item.status === 1),
+    });
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
     res.status(400).send();
   }
 });
+
+/**
+ * @swagger
+ * /v1/church/locations/reactivate/{churchcode}:
+ *  patch:
+ *      tags:
+ *      - "locations"
+ *      summary: Reactivate a church location
+ *      description: Endpoint to reactivate a church location
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *          -   in: "body"
+ *              name: "body"
+ *              required: true
+ *              schema:
+ *                  type: "object"
+ *                  required:
+ *                  -   "code"
+ *                  properties:
+ *                      code:
+ *                          type: "string"
+ *                          example: "ruang_utama"
+ *      responses:
+ *          '200':
+ *              description: Successfully reactivated a church servant
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.patch(
+  '/v1/church/locations/reactivate/:churchcode',
+  auth,
+  async (req, res) => {
+    const churchCode = req.params.churchcode;
+
+    try {
+      const church = await Church.isChurchAdminAndAvailable(
+        churchCode,
+        req.user.email
+      );
+      if (!church) {
+        throw new Error(
+          'Only church admin able to perform this operation or church must be active'
+        );
+      }
+
+      const doesExist = church.locations.filter(
+        (o) => o.code === req.body.code
+      );
+
+      if (!doesExist || doesExist.length === 0) {
+        throw new Error('Location code does not exist!');
+      }
+
+      const locationIndex = church.locations.findIndex(
+        (item) => item.code === req.body.code
+      );
+      if (church.locations[locationIndex].status === 1) {
+        throw new Error('Church location is already active');
+      }
+      church.locations[locationIndex].status = 1;
+      await church.save();
+
+      res.status(200).send();
+    } catch (e) {
+      logging.routerErrorLog(req, e.toString());
+      res.status(400).send();
+    }
+  }
+);
 
 module.exports = router;
