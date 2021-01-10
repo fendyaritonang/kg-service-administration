@@ -15,6 +15,8 @@ const logging = require('../utils/logging');
  *    description: "Church location endpoints"
  * -  name: "service"
  *    description: "Church Service endpoints"
+ * -  name: "administrator"
+ *    description: "Church Administrators"
  * definitions:
  *  Church:
  *      type: "object"
@@ -64,6 +66,9 @@ const logging = require('../utils/logging');
  *          timeOffset:
  *              type: "integer"
  *              example: "420"
+ *          status:
+ *              type: "integer"
+ *              example: "1"
  *  Admins:
  *      type: "object"
  *      properties:
@@ -241,6 +246,11 @@ const logging = require('../utils/logging');
  *                      timeOffset:
  *                          type: "integer"
  *                          example: "420"
+ *                      admins:
+ *                          type: "array"
+ *                          items:
+ *                              type: string
+ *                              example: "john@gmaail.com"
  *      responses:
  *          '201':
  *              description: Successfully created a new church.
@@ -255,8 +265,21 @@ const logging = require('../utils/logging');
  */
 router.post('/v1/church/register', auth, async (req, res) => {
   try {
+    const { code, name, address, timeOffset, admins } = { ...req.body };
+
+    if (
+      !name ||
+      name === '' ||
+      !code ||
+      code === '' ||
+      !timeOffset ||
+      timeOffset === ''
+    ) {
+      throw new Error('Compulsory data is not valid');
+    }
+
     const search = await Church.findOne({
-      $or: [{ code: req.body.code }, { name: req.body.name }],
+      $or: [{ code }, { name }],
     });
 
     if (search) {
@@ -264,13 +287,22 @@ router.post('/v1/church/register', auth, async (req, res) => {
     }
 
     let church = new Church({
-      code: req.body.code,
-      name: req.body.name,
-      address: req.body.address,
-      timeOffset: req.body.timeOffset,
+      code,
+      name,
+      address,
+      timeOffset,
       status: 1,
     });
     church.admins.push({ admin: req.user.email });
+
+    if (admins && admins.length > 0) {
+      admins.forEach((admin) => {
+        if (admin !== '' && admin !== req.user.email) {
+          church.admins.push({ admin });
+        }
+      });
+    }
+
     await church.save();
 
     res.status(201).send(church);
@@ -312,6 +344,11 @@ router.post('/v1/church/register', auth, async (req, res) => {
  *                      timeOffset:
  *                          type: "integer"
  *                          example: "420"
+ *                      admins:
+ *                          type: "array"
+ *                          items:
+ *                              type: string
+ *                              example: "john@gmaail.com"
  *      responses:
  *          '200':
  *              description: Successfully updated church name and address
@@ -327,7 +364,7 @@ router.post('/v1/church/register', auth, async (req, res) => {
 router.patch('/v1/church/update/:churchcode', auth, async (req, res) => {
   const churchCode = req.params.churchcode;
   const updates = Object.keys(req.body);
-  const allowedUpdates = ['name', 'address', 'timeOffset'];
+  const allowedUpdates = ['name', 'address', 'timeOffset', 'admins'];
   const isValidOperation = updates.every((update) =>
     allowedUpdates.includes(update)
   );
@@ -342,7 +379,22 @@ router.patch('/v1/church/update/:churchcode', auth, async (req, res) => {
       throw new Error('Only church admin able to perform this operation');
     }
 
-    updates.forEach((update) => (church[update] = req.body[update]));
+    church.name = req.body.name;
+    church.address = req.body.address;
+    church.timeOffset = req.body.timeOffset;
+
+    let newAdmins = [];
+    newAdmins.push({ admin: req.user.email });
+
+    if (req.body.admins && req.body.admins.length > 0) {
+      req.body.admins.forEach((admin) => {
+        if (admin !== '' && admin !== req.user.email) {
+          newAdmins.push({ admin });
+        }
+      });
+    }
+    church.admins = newAdmins;
+
     await church.save();
 
     res.status(200).send({
@@ -351,6 +403,7 @@ router.patch('/v1/church/update/:churchcode', auth, async (req, res) => {
       name: church.name,
       address: church.address,
       timeOffset: church.timeOffset,
+      admins: newAdmins,
     });
   } catch (e) {
     logging.routerErrorLog(req, e.toString());
@@ -382,7 +435,7 @@ router.get('/v1/church', auth, async (req, res) => {
       {
         'admins.admin': req.user.email,
       },
-      'code name address timeOffset'
+      'code name address timeOffset status'
     );
 
     res.status(200).send(church);
@@ -431,7 +484,7 @@ router.get('/v1/church/detail/:churchcode', auth, async (req, res) => {
       status: church.status,
       address: church.address,
       timeOffset: church.timeOffset,
-      admins: church.admins,
+      admins: church.admins.filter((e) => e.admin !== req.user.email),
       servants: church.servants,
       locations: church.locations,
     });
@@ -1227,5 +1280,192 @@ router.patch(
     }
   }
 );
+
+/**
+ * @swagger
+ * /v1/church/admins/{churchcode}:
+ *  post:
+ *      tags:
+ *      - "administrator"
+ *      summary: Add new church administrator
+ *      description: Endpoint to add new church administrator
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *          -   in: "body"
+ *              name: "body"
+ *              required: true
+ *              schema:
+ *                  type: "object"
+ *                  required:
+ *                  -   "adminemail"
+ *                  properties:
+ *                      adminemail:
+ *                          type: "string"
+ *                          example: "john@gmaail.com"
+ *      responses:
+ *          '200':
+ *              description: Successfully added new church admin
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.post('/v1/church/admins/:churchcode', auth, async (req, res) => {
+  const churchCode = req.params.churchcode;
+
+  try {
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
+    if (!church) {
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
+    }
+
+    const isDuplicate = church.admins.filter(
+      (o) => o.admin === req.body.adminemail
+    );
+
+    if (isDuplicate && isDuplicate.length > 0) {
+      throw new Error('Church admin already exist!');
+    }
+
+    church.admins = church.admins.concat({
+      admin: req.body.adminemail,
+    });
+
+    await church.save();
+
+    res.status(200).send();
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
+
+/**
+ * @swagger
+ * /v1/church/admins/{churchcode}:
+ *  delete:
+ *      tags:
+ *      - "administrator"
+ *      summary: Remove church admin
+ *      description: Endpoint to remove church admin
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *          -   in: "body"
+ *              name: "body"
+ *              required: true
+ *              schema:
+ *                  type: "object"
+ *                  required:
+ *                  -   "adminemail"
+ *                  properties:
+ *                      adminemail:
+ *                          type: "string"
+ *                          example: "john@gmaail.com"
+ *      responses:
+ *          '200':
+ *              description: Successfully removed church admin
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.delete('/v1/church/admins/:churchcode', auth, async (req, res) => {
+  const churchCode = req.params.churchcode;
+
+  try {
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
+    if (!church) {
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
+    }
+
+    if (!req.body.adminemail) {
+      throw new Error('Admin email is not provided');
+    }
+
+    const doesExist = church.admins.filter(
+      (o) => o.admin === req.body.adminemail
+    );
+
+    console.log(req.body.adminemail, doesExist);
+
+    if (!doesExist || doesExist.length === 0) {
+      throw new Error('Church admin does not exist!');
+    }
+
+    church.admins = church.admins.filter(
+      (e) => e.admin !== req.body.adminemail
+    );
+
+    await church.save();
+
+    res.status(200).send();
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
+
+/**
+ * @swagger
+ * /v1/church/admins/{churchcode}:
+ *  get:
+ *      tags:
+ *      - "administrator"
+ *      summary: List of church administrators
+ *      description: Endpoint to list of church administrator
+ *      parameters:
+ *          -   in: "path"
+ *              name: "churchcode"
+ *              description: "Church Code"
+ *              required: true
+ *              type: "string"
+ *      responses:
+ *          '200':
+ *              description: Successfully listed church locations under admin care
+ *              schema:
+ *                  type: "array"
+ *                  items:
+ *                      type: "string"
+ *                      example: "john@gmaail.com"
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.get('/v1/church/admins/:churchcode', auth, async (req, res) => {
+  const churchCode = req.params.churchcode;
+  try {
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
+    if (!church) {
+      throw new Error(
+        'Only church admin able to perform this operation or church must be active'
+      );
+    }
+
+    let admins = [];
+
+    church.admins.map((e) => admins.push(e.admin));
+
+    res.status(200).send(admins);
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
 
 module.exports = router;

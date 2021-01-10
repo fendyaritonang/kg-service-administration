@@ -867,4 +867,89 @@ router.get('/v1/church/service/events/:churchcode', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /v1/church/service/{serviceid}:
+ *  get:
+ *      tags:
+ *      - "service"
+ *      summary: Get service data by service id
+ *      description: Endpoint to get service data by service id
+ *      parameters:
+ *          -   in: "path"
+ *              name: "serviceid"
+ *              description: "Service Id"
+ *              required: true
+ *              type: "string"
+ *      responses:
+ *          '200':
+ *              description: Successfully got service data by service id
+ *              schema:
+ *                  type: "object"
+ *                  properties:
+ *                    services:
+ *                      type: "object"
+ *                      properties:
+ *                          churchCode:
+ *                              type: "string"
+ *                              example: "hkbps"
+ *                          title:
+ *                              type: "string"
+ *                              example: "Minggu Trinitatis"
+ *                          datetimeStart:
+ *                              type: "string"
+ *                              example: "1900-01-01T00:00:00Z"
+ *                          datetimeEnd:
+ *                              type: "string"
+ *                              example: "1900-01-01T00:00:00Z"
+ *                          locationCode:
+ *                              type: "string"
+ *                              example: "ruang_utama"
+ *                          locationName:
+ *                              type: "string"
+ *                              example: "Ruang Utama Gereja Lantai 1 (optional)"
+ *                          reflection:
+ *                              type: "string"
+ *                              example: "Service reflection (optional)"
+ *                          remarks:
+ *                              type: "string"
+ *                              example: "Service remarks (optional)"
+ *                          liturgy:
+ *                              type: "array"
+ *                              items:
+ *                                  $ref: "#/definitions/Liturgy"
+ *                          servants:
+ *                              type: "array"
+ *                              items:
+ *                                  $ref: "#/definitions/ServiceServants"
+ *                          news:
+ *                              type: "array"
+ *                              items:
+ *                                  $ref: "#/definitions/News"
+ *          '400':
+ *              description: Error, invalid input
+ */
+router.get('/v1/church/service/:serviceid', auth, async (req, res) => {
+  const serviceId = req.params.serviceid;
+  try {
+    const service = await Service.findOne({ status: 1, _id: serviceId });
+
+    const churchCode = service.churchCode;
+    const church = await Church.isChurchAdminAndAvailable(
+      churchCode,
+      req.user.email
+    );
+    if (!church) {
+      throw new Error(
+        'Only church admin able to perform this operation or church must be confirmed'
+      );
+    }
+
+    res.status(200).send(service);
+  } catch (e) {
+    logging.routerErrorLog(req, e.toString());
+    res.status(400).send();
+  }
+});
+
 module.exports = router;

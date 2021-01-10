@@ -100,7 +100,6 @@ churchSchema.methods.toJSON = function () {
 
   delete churchObject.admins;
   delete churchObject.servants;
-  delete churchObject.status;
 
   return churchObject;
 };

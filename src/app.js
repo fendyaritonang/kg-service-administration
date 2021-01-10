@@ -5,34 +5,40 @@ const swaggerJsDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 const churchRouter = require('./routers/church');
 const serviceRouter = require('./routers/service');
+const BRAND_SHORT = process.env.BRAND_SHORT || 'Ompusunggu';
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+
+const corsOptions = {
+  origin: true,
+  methods: ['POST', 'PUT', 'DELETE', 'PATCH', 'GET'],
+  credentials: true,
+  maxAge: 3600,
+};
 
 let app = express();
 app.mongoose = mongoose;
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(cookieParser());
 
 const swaggerOptions = {
   swaggerDefinition: {
     info: {
-      title: 'KG Administration Service',
-      description: 'Documentation of KG Administration Service API',
+      title: `${BRAND_SHORT} Administration Service`,
+      description: `Documentation of ${BRAND_SHORT} Administration Service API`,
       contact: {
-        name: 'KG',
-      },
-    },
-    securityDefinitions: {
-      JWT: {
-        description:
-          'Please copy and paste the token with prefix "Bearer " in input box.',
-        type: 'apiKey',
-        name: 'Authorization',
-        in: 'header',
+        name: `${BRAND_SHORT}`,
       },
     },
   },
   apis: ['src/routers/*.js'],
 };
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
 
 const swaggerDocs = swaggerJsDoc(swaggerOptions);
 
